@@ -1,195 +1,82 @@
-import streamlit as st
-import pandas as pd
-import plotly.graph_objects as go
 
-# 🩸 1. 페이지 기본 설정
-st.set_page_config(page_title="핏빛 인구 피라미드", layout="wide")
+# 2026년 데이터만 필터링
+df_2026 = df[df['연도'] == 2026].copy()
 
-# 🩸 2. 공포스러운 분위기를 위한 커스텀 CSS (블랙 & 레드)
-st.markdown("""
-<style>
-    /* 전체 배경을 칠흑 같은 검은색으로 */
-    .stApp {
-        background-color: #050000;
-    }
-    /* 텍스트를 핏빛 빨간색으로 */
-    h1, h2, h3, p, span, div, label {
-        color: #8B0000 !important; 
-        font-family: '궁서', 'Gungsuh', serif !important;
-    }
-    /* 지표 카드 스타일링 (어두운 붉은 테두리) */
-    [data-testid="metric-container"] {
-        background-color: #110000 !important;
-        border: 1px solid #4a0000;
-        padding: 15px;
-        border-radius: 5px;
-        box-shadow: 0 0 10px #4a0000;
-    }
-    /* 드롭다운 메뉴 스타일 약간 조정 */
-    .stSelectbox > div[data-baseweb="select"] {
-        background-color: #110000;
-        color: #ff0000;
-    }
-</style>
-""", unsafe_allow_html=True)
+# 코드를 5자리 문자열로 변환 (시군구 코드 추출)
+df_2026['sigungu_code'] = df_2026['코드'].astype(str).str[:5]
 
-st.title("🩸 피에 물든 인구 피라미드...")
-st.markdown("이 동네에는... 누가 얼마나 살고 있을까요...?")
+# '계_' 로 시작하는 열 찾기
+all_age_cols = [col for col in df_2026.columns if col.startswith('계_')]
 
-# 데이터 불러오기 함수
-@st.cache_data
-def load_data():
-    url = "https://github.com/siwoo9831-alt/population/blob/main/population_ts_yearly_gender.zip?raw=true"
+# 65세 이상 열 찾기 ('계_65세' ~ '계_100세 이상')
+# 나이 숫자를 추출하여 65 이상인지 확인
+senior_cols = []
+for col in all_age_cols:
+    age_str = col.replace('계_', '').replace('세 이상', '').replace('세', '')
     try:
-        df = pd.read_csv(url, compression='zip')
-    except UnicodeDecodeError:
-        df = pd.read_csv(url, compression='zip', encoding='cp949')
-    return df
+        if int(age_str) >= 65:
+            senior_cols.append(col)
+    except ValueError:
+        pass # 예외적인 컬럼명이 있다면 무시
 
-with st.spinner("어둠 속에서 데이터를 끌어올리는 중..."):
-    df = load_data()
+# 시군구별로 인구 합산
+# 전체 인구와 65세 이상 인구를 각각 시군구별로 먼저 합산
+agg_dict = {col: 'sum' for col in all_age_cols}
+df_sigungu = df_2026.groupby('sigungu_code')[all_age_cols].sum().reset_index()
 
-latest_year = df['연도'].max()
-df_latest = df[df['연도'] == latest_year]
+# 시군구별 총 인구 및 고령 인구 계산
+df_sigungu['total_pop'] = df_sigungu[all_age_cols].sum(axis=1)
+df_sigungu['senior_pop'] = df_sigungu[senior_cols].sum(axis=1)
 
-# 지역 선택 드롭다운
-col1, col2, col3 = st.columns(3)
-sido_list = df_latest['시도'].dropna().unique()
-with col1:
-    selected_sido = st.selectbox("어느 시도를 엿보시겠습니까?", sido_list)
+# 고령화율(%) 계산
+df_sigungu['aging_rate'] = (df_sigungu['senior_pop'] / df_sigungu['total_pop']) * 100
 
-df_sigungu = df_latest[df_latest['시도'] == selected_sido]
-sigungu_list = df_sigungu['시군구'].dropna().unique()
-with col2:
-    selected_sigungu = st.selectbox("어느 시군구를 엿보시겠습니까?", sigungu_list)
+# 2. GeoJSON 데이터 로드
+geojson_url = "https://github.com/siwoo9831-alt/population/raw/main/sigungu_kr.geojson.txt"
+response = requests.get(geojson_url)
+geojson_data = response.json()
 
-df_dong = df_sigungu[df_sigungu['시군구'] == selected_sigungu]
-dong_list = df_dong['동'].dropna().unique()
-with col3:
-    selected_dong = st.selectbox("마지막으로, 동을 선택하십시오...", dong_list)
-
-final_data = df_dong[df_dong['동'] == selected_dong]
-
-if not final_data.empty:
-    # 🩸 3. 데이터 계산 (총인구, 평균연령, 고령화율, 유소년/노년층 인구)
-    total_pop = 0
-    total_age_sum = 0
-    elderly_pop = 0 # 65세 이상
-    kids_pop = 0    # 0~14세
+# GeoJSON의 feature에서 '코드' 속성을 확인하고 일치시키기 위해 데이터프레임에 이름 추가 (호버용)
+code_to_name = {}
+for feature in geojson_data['features']:
+    props = feature['properties']
+    code_to_name[str(props['코드'])] = props.get('시군구', '알 수 없음')
     
-    male_pop = []
-    female_pop = []
-    ages = []
-    
-    for i in range(101):
-        age_str = "100세 이상" if i == 100 else f"{i}세"
-        ages.append(age_str)
-        
-        m_col = f"남_{age_str}"
-        f_col = f"여_{age_str}"
-        
-        m_val = int(final_data[m_col].iloc[0])
-        f_val = int(final_data[f_col].iloc[0])
-        
-        male_pop.append(m_val)
-        female_pop.append(f_val)
-        
-        # 지표 계산용 누적
-        pop_sum = m_val + f_val
-        total_pop += pop_sum
-        total_age_sum += pop_sum * i
-        
-        if i >= 65:
-            elderly_pop += pop_sum
-        if i <= 14:
-            kids_pop += pop_sum
+df_sigungu['sigungu_name'] = df_sigungu['sigungu_code'].map(code_to_name)
 
-    # 방어코드 (인구가 0명인 유령동네 방지)
-    avg_age = total_age_sum / total_pop if total_pop > 0 else 0
-    aging_rate = (elderly_pop / total_pop * 100) if total_pop > 0 else 0
+return df_sigungu, geojson_data
 
-    st.write("---")
-    
-    # 🩸 4. 상단 지표 카드 3개 나란히 배치
-    metric_col1, metric_col2, metric_col3 = st.columns(3)
-    
-    with metric_col1:
-        st.metric("💀 총인구", f"{total_pop:,}명")
-    with metric_col2:
-        st.metric("⏳ 평균연령", f"{avg_age:.1f}세")
-    with metric_col3:
-        # 고령화율 20% 초과 시 위험 경고 표시
-        warning_sign = " 🚨 (초고령 위험)" if aging_rate > 20 else ""
-        st.metric("🍂 고령화율(65세 이상)", f"{aging_rate:.1f}%{warning_sign}")
 
-    st.write("---")
+with st.spinner("데이터를 불러오고 처리하는 중입니다... (최초 로딩 시 시간이 걸릴 수 있습니다)"):
+try:
+df_sigungu, geojson_data = load_data()
 
-    # 남자는 그래프상 왼쪽으로 가야 하므로 음수 처리
-    male_pop_neg = [-v for v in male_pop]
-    
-    # 🩸 5. 공포스러운 분위기의 Plotly 피라미드 차트
-    fig = go.Figure()
+    # Plotly Choropleth 맵 생성
+    fig = px.choropleth(
+        df_sigungu,
+        geojson=geojson_data,
+        locations='sigungu_code',
+        featureidkey='properties.코드', # GeoJSON의 어떤 속성과 매칭할지
+        color='aging_rate',
+        color_continuous_scale='Reds', # 고령화율이 높을수록 진하게
+        hover_name='sigungu_name',
+        hover_data={'sigungu_code': False, 'aging_rate': ':.1f%'},
+        labels={'aging_rate': '고령화율 (%)'}
+    )
 
-    # 남자 (검붉은 색)
-    fig.add_trace(go.Bar(
-        y=ages,
-        x=male_pop_neg,
-        name='남자',
-        orientation='h',
-        marker_color='#4A0000', # 아주 어두운 붉은색
-        hoverinfo='y+text',
-        text=[f"{val:,}명" for val in male_pop], 
-    ))
-
-    # 여자 (선명한 핏빛)
-    fig.add_trace(go.Bar(
-        y=ages,
-        x=female_pop,
-        name='여자',
-        orientation='h',
-        marker_color='#8A0303', # 선명한 핏빛
-        hoverinfo='y+text',
-        text=[f"{val:,}명" for val in female_pop],
-    ))
+    fig.update_geos(
+        fitbounds="locations", 
+        visible=False # 배경 지도(타일), 해안선 등 모두 숨김
+    )
 
     fig.update_layout(
-        title=f"<b>{selected_dong}... 이곳에 존재하는 자들의 흔적</b>",
-        title_font_color="#ff0000",
-        title_x=0.5,
-        barmode='relative',
-        plot_bgcolor='#000000',  # 그래프 배경 블랙
-        paper_bgcolor='#050000', # 전체 배경 블랙
-        font=dict(color='#8B0000'), # 폰트 색상 다크 레드
-        yaxis=dict(
-            title="나이",
-            categoryorder='array', 
-            categoryarray=ages,    # 0세가 맨 아래, 100세 이상이 맨 위 고정
-            gridcolor='#1a0000'
-        ),
-        xaxis=dict(
-            title="인구 수(명)",
-            tickmode='array',
-            tickvals=[-max(male_pop) if max(male_pop) > 0 else 0, 0, max(female_pop) if max(female_pop) > 0 else 0],
-            ticktext=[f"{max(male_pop):,}", "0", f"{max(female_pop):,}"],
-            gridcolor='#1a0000'
-        ),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(l=50, r=50, t=80, b=50)
+        margin={"r":0,"t":0,"l":0,"b":0},
+        coloraxis_colorbar=dict(title="고령화율(%)")
     )
 
     st.plotly_chart(fig, use_container_width=True)
-
-    # 🩸 6. 피라미드 하단 자동 생성 한 줄 설명
-    st.subheader("이 동네는 아이가 많은 편인가요, 어르신이 많은 편인가요?")
     
-    if total_pop == 0:
-        st.write("아무도 살지 않는 텅 빈 유령 동네입니다...")
-    elif kids_pop > elderly_pop:
-        st.write("👶 아이들(0~14세)이 더 많습니다... 아직은 어린 생명들의 숨결이 느껴지는 곳이군요.")
-    elif elderly_pop > kids_pop:
-        st.write("🍂 어르신(65세 이상)이 더 많습니다... 아이들의 웃음소리보다는 늙어가는 자들의 침묵이 더 짙게 깔린 곳입니다...")
-    else:
-        st.write("⚖️ 아이들과 어르신의 수가 비슷합니다... 삶과 늙음의 경계가 아슬아슬하게 유지되고 있습니다...")
+    st.info("지도에 마우스를 올리면 시군구 이름과 고령화율을 확인할 수 있습니다.")
 
-else:
-    st.error("존재하지 않는 데이터입니다... 어둠 속에 묻힌 곳일까요?")
+except Exception as e:
+    st.error(f"데이터를 불러오거나 처리하는 중 오류가 발생했습니다: {e}")
