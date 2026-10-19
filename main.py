@@ -5,19 +5,19 @@ import plotly.graph_objects as go
 # 🩸 1. 페이지 기본 설정
 st.set_page_config(page_title="핏빛 인구 피라미드", layout="wide")
 
-# 🩸 2. 공포스러운 분위기를 위한 커스텀 CSS (블랙 & 레드)
+# 🩸 2. 공포스러운 분위기를 위한 커스텀 CSS (블랙 & 다크 레드)
 st.markdown("""
 <style>
     /* 전체 배경을 칠흑 같은 검은색으로 */
     .stApp {
         background-color: #050000;
     }
-    /* 텍스트를 핏빛 빨간색으로 */
+    /* 텍스트를 핏빛 빨간색으로, 글꼴은 궁서체로 */
     h1, h2, h3, p, span, div, label {
         color: #8B0000 !important; 
         font-family: '궁서', 'Gungsuh', serif !important;
     }
-    /* 지표 카드 스타일링 (어두운 붉은 테두리) */
+    /* 지표 카드 스타일링 (어두운 붉은 테두리와 그림자) */
     [data-testid="metric-container"] {
         background-color: #110000 !important;
         border: 1px solid #4a0000;
@@ -36,7 +36,7 @@ st.markdown("""
 st.title("🩸 피에 물든 인구 피라미드...")
 st.markdown("이 동네에는... 누가 얼마나 살고 있을까요...?")
 
-# 데이터 불러오기 함수
+# 데이터 불러오기 함수 (캐시 적용)
 @st.cache_data
 def load_data():
     url = "https://github.com/siwoo9831-alt/population/blob/main/population_ts_yearly_gender.zip?raw=true"
@@ -49,10 +49,11 @@ def load_data():
 with st.spinner("어둠 속에서 데이터를 끌어올리는 중..."):
     df = load_data()
 
+# 최신 연도 필터링
 latest_year = df['연도'].max()
 df_latest = df[df['연도'] == latest_year]
 
-# 지역 선택 드롭다운
+# 지역 선택 드롭다운 (3단계)
 col1, col2, col3 = st.columns(3)
 sido_list = df_latest['시도'].dropna().unique()
 with col1:
@@ -68,22 +69,4 @@ dong_list = df_dong['동'].dropna().unique()
 with col3:
     selected_dong = st.selectbox("마지막으로, 동을 선택하십시오...", dong_list)
 
-final_data = df_dong[df_dong['동'] == selected_dong]
-
-if not final_data.empty:
-    # 🩸 3. 데이터 계산 (총인구, 평균연령, 고령화율, 유소년/노년층 인구)
-    total_pop = 0
-    total_age_sum = 0
-    elderly_pop = 0 # 65세 이상
-    kids_pop = 0    # 0~14세
-    
-    male_pop = []
-    female_pop = []
-    ages = []
-    
-    for i in range(101):
-        age_str = "100세 이상" if i == 100 else f"{i}세"
-        ages.append(age_str)
-        
-        m_col = f"남_{age_str}"
-        f_col = f"여_{age_str}"
+final_data = df_
