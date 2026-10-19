@@ -2,20 +2,17 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
-# 🩸 1. 페이지 기본 설정
+# 1. 페이지 기본 설정
 st.set_page_config(page_title="핏빛 인구 피라미드", layout="wide")
 
-# 🩸 2. 공포스러운 분위기를 위한 커스텀 CSS
+# 2. 공포스러운 분위기를 위한 커스텀 CSS
 st.markdown("""
 <style>
-    /* 전체 배경 블랙 */
     .stApp { background-color: #050000; }
-    /* 텍스트 핏빛 레드 & 궁서체 */
     h1, h2, h3, p, span, div, label { 
         color: #8B0000 !important; 
         font-family: '궁서', 'Gungsuh', serif !important; 
     }
-    /* 지표 카드 스타일링 */
     [data-testid="metric-container"] { 
         background-color: #110000 !important; 
         border: 1px solid #4a0000; 
@@ -23,7 +20,6 @@ st.markdown("""
         border-radius: 5px; 
         box-shadow: 0 0 10px #4a0000; 
     }
-    /* 드롭다운 메뉴 스타일 */
     .stSelectbox > div[data-baseweb="select"] { 
         background-color: #110000; 
         color: #ff0000; 
@@ -34,7 +30,6 @@ st.markdown("""
 st.title("🩸 피에 물든 인구 피라미드...")
 st.markdown("이 동네에는... 누가 얼마나 살고 있을까요...?")
 
-# 데이터 불러오기 함수 (캐시 적용)
 @st.cache_data
 def load_data():
     url = "https://github.com/siwoo9831-alt/population/blob/main/population_ts_yearly_gender.zip?raw=true"
@@ -47,11 +42,9 @@ def load_data():
 with st.spinner("어둠 속에서 데이터를 끌어올리는 중..."):
     df = load_data()
 
-# 최신 연도 필터링
 latest_year = df['연도'].max()
 df_latest = df[df['연도'] == latest_year]
 
-# 지역 선택 드롭다운 (3단계)
 col1, col2, col3 = st.columns(3)
 sido_list = df_latest['시도'].dropna().unique()
 with col1:
@@ -70,7 +63,133 @@ with col3:
 final_data = df_dong[df_dong['동'] == selected_dong]
 
 if not final_data.empty:
-    # 🩸 3. 데이터 집계 및 계산
+    # 3. 데이터 집계 및 계산 (오류 방지를 위해 주석과 줄바꿈을 정리했습니다)
     total_pop = 0
     total_age_sum = 0
-    elderly_pop =
+    elderly_pop = 0
+    kids_pop = 0
+    
+    male_pop = []
+    female_pop = []
+    ages = []
+    
+    for i in range(101):
+        age_str = "100세 이상" if i == 100 else f"{i}세"
+        ages.append(age_str)
+        
+        m_col = f"남_{age_str}"
+        f_col = f"여_{age_str}"
+        
+        m_val = int(final_data[m_col].iloc[0])
+        f_val = int(final_data[f_col].iloc[0])
+        
+        male_pop.append(m_val)
+        female_pop.append(f_val)
+        
+        pop_sum = m_val + f_val
+        total_pop += pop_sum
+        total_age_sum += pop_sum * i
+        
+        if i >= 65:
+            elderly_pop += pop_sum
+        if i <= 14:
+            kids_pop += pop_sum
+
+    avg_age = total_age_sum / total_pop if total_pop > 0 else 0
+    aging_rate = (elderly_pop / total_pop * 100) if total_pop > 0 else 0
+
+    st.write("---")
+    
+    # 4. 상단 지표 카드
+    metric_col1, metric_col2, metric_col3 = st.columns(3)
+    
+    with metric_col1:
+        st.metric("💀 총인구", f"{total_pop:,}명")
+    with metric_col2:
+        st.metric("⏳ 평균연령", f"{avg_age:.1f}세")
+    with metric_col3:
+        warning_sign = " 🚨 (초고령 위험)" if aging_rate > 20 else ""
+        st.metric("🍂 고령화율(65세 이상)", f"{aging_rate:.1f}%{warning_sign}")
+
+    st.write("---")
+
+    male_pop_neg = [-v for v in male_pop]
+    
+    max_val = max(max(male_pop) if male_pop else 0, max(female_pop) if female_pop else 0)
+    tick_step = 500 if max_val <= 2000 else (1000 if max_val <= 5000 else 2000)
+    bound = ((max_val // tick_step) + 1) * tick_step
+    
+    tickvals = list(range(-bound, bound + 1, tick_step))
+    ticktext = [f"{abs(v):,}" for v in tickvals]
+
+    # 5. 공포스러운 분위기의 Plotly 피라미드 차트
+    fig = go.Figure()
+
+    fig.add_trace(go.Bar(
+        y=ages,
+        x=male_pop_neg,
+        name='남자',
+        orientation='h',
+        marker_color='#4A0000', 
+        hoverinfo='y+text',
+        text=[f"남자 {val:,}명" for val in male_pop]
+    ))
+
+    fig.add_trace(go.Bar(
+        y=ages,
+        x=female_pop,
+        name='여자',
+        orientation='h',
+        marker_color='#8A0303', 
+        hoverinfo='y+text',
+        text=[f"여자 {val:,}명" for val in female_pop]
+    ))
+
+    fig.update_layout(
+        title=f"<b>{selected_dong}... 이곳에 존재하는 자들의 흔적</b>",
+        title_font_color="#ff0000",
+        title_x=0.5,
+        barmode='relative',
+        plot_bgcolor='#000000',  
+        paper_bgcolor='#050000', 
+        font=dict(color='#8B0000'), 
+        yaxis=dict(
+            title="나이",
+            categoryorder='array', 
+            categoryarray=ages,    
+            gridcolor='#1a0000'
+        ),
+        xaxis=dict(
+            title="인구 수(명)",
+            tickmode='array',
+            tickvals=tickvals,
+            ticktext=ticktext,     
+            gridcolor='#1a0000'
+        ),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=50, r=50, t=80, b=50)
+    )
+
+    fig.add_annotation(
+        x=0, y=95, 
+        text="👈 남자는 왼쪽, 여자는 오른쪽으로 뻗어갑니다 👉",
+        showarrow=False,
+        font=dict(size=12, color="#ff0000"),
+        bgcolor="#110000",
+        bordercolor="#4a0000",
+        borderpad=4
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 6. 피라미드 하단 한 줄 설명
+    st.subheader("이 동네는 어린 영혼이 많을까요, 늙은 영혼이 많을까요?")
+    
+    if total_pop == 0:
+        st.write("아무도 살지 않는 텅 빈 유령 동네입니다...")
+    elif kids_pop > elderly_pop:
+        st.write("👶 어린아이들(0~14세)이 더 많습니다... 아직은 어린 생명들의 숨결이 느껴지는 곳이군요.")
+    elif elderly_pop > kids_pop:
+        st.write("🍂 어르신(65세 이상)이 더 많습니다... 아이들의 웃음소리보다는 늙어가는 자들의 침묵이 더 짙게 깔린 곳입니다...")
+    else:
+        st.write("⚖️ 아이들과 어르신의 수가 비슷합니다... 삶의 시작
